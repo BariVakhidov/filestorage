@@ -1,12 +1,14 @@
+CC=go
+
 lint:
 	@golangci-lint run -c ./golangci.yml ./...
 
-build:
-	@go build -o bin/app
+build: lint
+	@$(CC) build -o bin/app
 
-run: lint build
+run: build
 	@./bin/app
 
 test:
-	@go test -v ./...
+	@$(CC) test -v ./...
 
