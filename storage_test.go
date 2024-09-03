@@ -26,21 +26,22 @@ func TestTransformFunc(t *testing.T) {
 
 func TestStorage(t *testing.T) {
 	s := createStore()
+	id, _ := generateID()
 	defer teardown(t, s)
 
 	for i := 0; i < 50; i++ {
 		data := []byte("some test")
 		key := fmt.Sprintf("foo_%d", i)
 
-		if err := s.Write(key, bytes.NewReader(data)); err != nil {
+		if _, err := s.Write(id, key, bytes.NewReader(data)); err != nil {
 			t.Error(err)
 		}
 
-		if exists := s.Has(key); !exists {
+		if exists := s.Has(id, key); !exists {
 			t.Errorf("expected to have key %s", key)
 		}
 
-		buf, err := s.Read(key)
+		_, buf, err := s.Read(id, key)
 		if err != nil {
 			t.Error(err)
 		}
@@ -51,11 +52,11 @@ func TestStorage(t *testing.T) {
 			t.Errorf("want %s have %s", data, b)
 		}
 
-		if err := s.Delete(key); err != nil {
+		if err := s.Delete(id, key); err != nil {
 			t.Error(err)
 		}
 
-		if exists := s.Has(key); exists {
+		if exists := s.Has(id, key); exists {
 			t.Errorf("expected to NOT have %s", key)
 		}
 	}
