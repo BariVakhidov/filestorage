@@ -34,7 +34,7 @@ func TestServer(t *testing.T) {
 
 	time.Sleep(time.Millisecond * 500)
 
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 1500; i++ {
 		key := fmt.Sprintf("key_%d.png", i)
 		payload := fmt.Sprintf("payload_%d", i)
 		d := bytes.NewReader([]byte(payload))
@@ -57,5 +57,9 @@ func TestServer(t *testing.T) {
 		}
 
 		assert.Equal(t, payload, string(b))
+
+		if err := s3.Delete(key); err != nil {
+			t.Error(err)
+		}
 	}
 }

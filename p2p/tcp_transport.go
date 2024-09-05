@@ -139,13 +139,12 @@ func (t *TCPTransport) handleConnection(conn net.Conn, outbound bool) {
 	}
 
 	for {
-		rpc := RPC{}
-		if err := t.Decoder.Decode(conn, &rpc); err != nil {
+		rpc := RPC{From: conn.RemoteAddr().String()}
+
+		if err = t.Decoder.Decode(conn, &rpc); err != nil {
 			log.Printf("[%s] TCP error: %s\n", conn.LocalAddr(), err)
 			return
 		}
-
-		rpc.From = conn.RemoteAddr().String()
 
 		if rpc.Stream {
 			peer.wg.Add(1)
