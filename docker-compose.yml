@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  filestorage:
+    build:
+      context: .
+    container_name: fileserver
+    hostname: fileserver
+    ports:
+      - 8080:3000

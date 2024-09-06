@@ -2,12 +2,9 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"log/slog"
-	"os"
 
 	"github.com/BariVakhidov/filestorage/p2p"
-	"github.com/joho/godotenv"
 )
 
 func makeServer(listenAddr string, encKey []byte, nodes ...string) (*FileServer, error) {
@@ -40,21 +37,21 @@ func makeServer(listenAddr string, encKey []byte, nodes ...string) (*FileServer,
 }
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalln(err)
-	}
+	// err := godotenv.Load()
+	// if err != nil {
+	// 	log.Fatalln(err)
+	// }
 
-	portString := os.Getenv("PORT")
+	// portString := os.Getenv("PORT")
 
-	if portString == "" {
-		log.Fatal("No PORT provided")
-	}
+	// if portString == "" {
+	// 	log.Fatal("No PORT provided")
+	// }
 
 	encKey, _ := newEncryptionKey()
 	//FIXME
 	fmt.Println(encKey)
-	server, err := makeServer(portString, encKey)
+	server, err := makeServer(":3000", encKey)
 
 	if err != nil {
 		slog.Error("server error", "err", err)
