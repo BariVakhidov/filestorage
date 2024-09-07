@@ -7,8 +7,9 @@ WORKDIR /app
 
 COPY go.mod go.sum ./
 RUN go mod download
-# TODO
-COPY . .
+RUN go mod verify
+
+COPY . ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /filestorage
 
@@ -24,6 +25,6 @@ WORKDIR /
 COPY --from=build-stage /filestorage /filestorage
 EXPOSE 8080
 
-USER nonroot:nonroot
+USER root:root
 
 ENTRYPOINT ["/filestorage"]

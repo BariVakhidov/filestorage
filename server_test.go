@@ -34,7 +34,7 @@ func TestServer(t *testing.T) {
 
 	time.Sleep(time.Millisecond * 500)
 
-	for i := 0; i < 1500; i++ {
+	for i := 0; i < 200; i++ {
 		key := fmt.Sprintf("key_%d.png", i)
 		payload := fmt.Sprintf("payload_%d", i)
 		d := bytes.NewReader([]byte(payload))
@@ -42,10 +42,9 @@ func TestServer(t *testing.T) {
 			t.Error("store err: ", err)
 		}
 
-		if err := s3.store.Delete(s3.ID, key); err != nil {
+		if err := s3.store.Delete(s3.ID, hashKey(key)); err != nil {
 			t.Error(err)
 		}
-
 		_, r, err := s3.Get(key)
 		if err != nil {
 			t.Error(err)

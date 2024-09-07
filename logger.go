@@ -5,12 +5,6 @@ import (
 	"os"
 )
 
-const (
-	envLocal = "local"
-	envDev   = "dev"
-	envProd  = "prod"
-)
-
 func setupLogger(env string) *slog.Logger {
 	var logger *slog.Logger
 

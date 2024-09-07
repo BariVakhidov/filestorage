@@ -2,9 +2,17 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
+	"log"
+	"os"
 
 	"github.com/BariVakhidov/filestorage/p2p"
+	"github.com/joho/godotenv"
+)
+
+const (
+	envLocal = "local"
+	envDev   = "development"
+	envProd  = "production"
 )
 
 func makeServer(listenAddr string, encKey []byte, nodes ...string) (*FileServer, error) {
@@ -37,29 +45,35 @@ func makeServer(listenAddr string, encKey []byte, nodes ...string) (*FileServer,
 }
 
 func main() {
-	// err := godotenv.Load()
-	// if err != nil {
-	// 	log.Fatalln(err)
-	// }
+	env := os.Getenv("GO_ENV")
+	if env == "" {
+		env = envDev
+	}
 
-	// portString := os.Getenv("PORT")
-
-	// if portString == "" {
-	// 	log.Fatal("No PORT provided")
-	// }
+	if env != envProd {
+		err := godotenv.Load()
+		if err != nil {
+			log.Println("Error loading .env file")
+		}
+	}
 
 	encKey, _ := newEncryptionKey()
 	//FIXME
 	fmt.Println(encKey)
-	server, err := makeServer(":3000", encKey)
+	portString := os.Getenv("PORT")
+
+	if portString == "" {
+		log.Fatal("No PORT provided")
+	}
+	server, err := makeServer(portString, encKey)
 
 	if err != nil {
-		slog.Error("server error", "err", err)
-		return
+		log.Fatalln("Unable to start server: ", err)
 	}
 
-	if err := server.Start(); err != nil {
-		slog.Error("server can't start", "err", err)
-		return
-	}
+	go func() {
+		log.Fatalln(server.Start())
+	}()
+
+	select {}
 }

@@ -15,10 +15,9 @@ import (
 const (
 	ACTION_DELETED            = "ACTION_DELETED"
 	ACTION_STORE_STREAM_READY = "ACTION_STORE_STREAM_READY"
-	ACTION_GET_STREAM_READY   = "ACTION_GET_STREAM_READY"
 )
 
-var infoActions = [3]string{ACTION_DELETED, ACTION_GET_STREAM_READY, ACTION_STORE_STREAM_READY}
+var infoActions = [3]string{ACTION_DELETED, ACTION_STORE_STREAM_READY}
 
 type NotFoundPeerError struct {
 	From string
@@ -133,10 +132,12 @@ func (s *FileServer) sendMessage(msg *Message, peer p2p.Peer) error {
 		s.Logger.Error("peer.Send IncomingMessage", "err", err)
 		return err
 	}
+
 	if err := peer.Send(buf.Bytes()); err != nil {
 		s.Logger.Error("peer.Send msg", "err", err)
 		return err
 	}
+
 	return nil
 }
 
@@ -194,30 +195,14 @@ func (s *FileServer) handleMessageGetFile(msg MessageGetFile, from string) error
 		return err
 	}
 
-	if rc, ok := r.(io.ReadCloser); ok {
-		fmt.Printf("closing read stream\n")
-		defer rc.Close()
-	}
-
 	peer, ok := s.peers[from]
 	if !ok {
 		return NotFoundPeerError{From: from}
 	}
 
-	messageReady := &Message{
-		Payload: MessageInfo{
-			Key:    msg.Key,
-			Action: ACTION_STORE_STREAM_READY,
-		},
-	}
-	if err := s.sendMessage(messageReady, peer); err != nil {
-		return err
-	}
-
 	if err := peer.Send([]byte{p2p.IncomingStream}); err != nil {
 		return err
 	}
-
 	if err := binary.Write(peer, binary.LittleEndian, fileSize+16); err != nil {
 		return err
 	}
@@ -234,13 +219,13 @@ func (s *FileServer) handleMessageGetFile(msg MessageGetFile, from string) error
 
 func (s *FileServer) handleMessageInfo(msg MessageInfo) error {
 	s.infoLock.RLock()
+	defer s.infoLock.RUnlock()
 	wg, ok := s.infoWGroups[msg.Action][msg.Key]
 	if !ok {
 		s.Logger.Error("stream not found", "id", msg.Key, "Transport.Addr", s.Transport.Addr())
 		return nil
 	}
 	wg.Done()
-	s.infoLock.RUnlock()
 	return nil
 }
 
@@ -269,6 +254,8 @@ func (s *FileServer) handleMessageStoreFile(msg MessageStoreFile, from string) e
 		return NotFoundPeerError{From: from}
 	}
 
+	defer peer.CloseStream()
+
 	messageReady := &Message{
 		Payload: MessageInfo{
 			Key:    msg.Key,
@@ -285,8 +272,6 @@ func (s *FileServer) handleMessageStoreFile(msg MessageStoreFile, from string) e
 	}
 
 	fmt.Printf("[%s] written (%d) bytes to the disk with id %s\n", s.Transport.Addr(), n, msg.ID)
-
-	peer.CloseStream()
 
 	return nil
 }
@@ -418,12 +403,34 @@ func (s *FileServer) Get(key string) (int64, io.Reader, error) {
 		},
 	}
 
-	if err := s.broadcast(msg, hashedKey, ACTION_GET_STREAM_READY); err != nil {
+	buf := new(bytes.Buffer)
+	if err := gob.NewEncoder(buf).Encode(msg); err != nil {
 		return 0, nil, err
 	}
 
 	for _, peer := range s.peers {
 		go func() {
+			//TODO: retry sending
+			if err := peer.Send([]byte{p2p.IncomingMessage}); err != nil {
+				s.Logger.Error("peer.Send IncomingMessage", "err", err)
+				return
+			}
+			if err := peer.Send(buf.Bytes()); err != nil {
+				s.Logger.Error("peer.Send msg", "err", err)
+				return
+			}
+		}()
+	}
+
+	wg := &sync.WaitGroup{}
+	for _, peer := range s.peers {
+		wg.Add(1)
+		go func() {
+			defer func() {
+				peer.CloseStream()
+				wg.Done()
+			}()
+
 			var fileSize int64
 			if err := binary.Read(peer, binary.LittleEndian, &fileSize); err != nil {
 				return
@@ -435,10 +442,9 @@ func (s *FileServer) Get(key string) (int64, io.Reader, error) {
 			}
 
 			fmt.Printf("[%s] received (%d) bytes over the network %s\n", s.Transport.Addr(), n, peer.RemoteAddr())
-			peer.CloseStream()
 		}()
 	}
-
+	wg.Wait()
 	return s.store.Read(s.ID, hashedKey)
 }
 
