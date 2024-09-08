@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 
@@ -58,8 +57,6 @@ func main() {
 	}
 
 	encKey, _ := newEncryptionKey()
-	//FIXME
-	fmt.Println(encKey)
 	portString := os.Getenv("PORT")
 
 	if portString == "" {

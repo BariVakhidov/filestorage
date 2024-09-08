@@ -31,6 +31,12 @@ func (dec DefaultDecoder) Decode(r io.Reader, rpc *RPC) error {
 		return nil
 	}
 
+	closed := peakBuf[0] == ClosePeer
+	if closed {
+		rpc.Closed = true
+		return nil
+	}
+
 	buf := make([]byte, 1028)
 	n, err := r.Read(buf)
 

@@ -1,6 +1,7 @@
 package p2p
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -16,14 +17,18 @@ type TCPPeer struct {
 	//if we accept and retrieve a connection => outbound == false
 	outbound bool
 
-	wg *sync.WaitGroup
+	wg        *sync.WaitGroup
+	rpcChan   chan RPC
+	closeChan chan struct{}
 }
 
 func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 	return &TCPPeer{
-		outbound: outbound,
-		Conn:     conn,
-		wg:       &sync.WaitGroup{},
+		outbound:  outbound,
+		Conn:      conn,
+		wg:        &sync.WaitGroup{},
+		rpcChan:   make(chan RPC),
+		closeChan: make(chan struct{}),
 	}
 }
 
@@ -31,6 +36,16 @@ func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 func (t *TCPPeer) Send(b []byte) error {
 	_, err := t.Write(b)
 	return err
+}
+
+// Consume implements the Peer interface
+func (t *TCPPeer) Consume() <-chan RPC {
+	return t.rpcChan
+}
+
+// ClosePeer implements the Peer interface
+func (t *TCPPeer) ClosePeer() <-chan struct{} {
+	return t.closeChan
 }
 
 // CloseStream implements the Peer interface
@@ -74,29 +89,48 @@ func (t *TCPTransport) Close() error {
 }
 
 // Dial implements the Transport interface
-func (t *TCPTransport) Dial(addr string) error {
-	conn, err := net.Dial("tcp", addr)
-
+func (t *TCPTransport) Dial(addr string) (Peer, error) {
+	// Load client's certificate and private key
+	cert, err := tls.LoadX509KeyPair("certs/client.pem", "certs/client.key")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	go t.handleConnection(conn, true)
+	config := &tls.Config{
+		Certificates:       []tls.Certificate{cert},
+		InsecureSkipVerify: true, // Skip verification for self-signed certificates
+	}
 
-	return nil
+	// Establish a TLS connection to the server
+	conn, err := tls.Dial("tcp", addr, config)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return t.handleConnection(conn, true)
 }
 
 func (t *TCPTransport) ListenAndAccept() error {
 	var err error
-
-	t.listener, err = net.Listen("tcp", t.ListenAddr)
+	// Load server's certificate and private key
+	cert, err := tls.LoadX509KeyPair("certs/server.pem", "certs/server.key")
 	if err != nil {
 		return err
 	}
 
-	go t.acceptLoop()
+	// Create a TLS config using the certificate
+	config := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	// Create a TCP listener
+	t.listener, err = tls.Listen("tcp", t.ListenAddr, config)
+	if err != nil {
+		return err
+	}
 
 	log.Printf("TCP transport is listening port: %s\n", t.ListenAddr)
+
+	t.acceptLoop()
 
 	return nil
 }
@@ -113,47 +147,61 @@ func (t *TCPTransport) acceptLoop() {
 			log.Printf("TCP accept err %s\n", err)
 		}
 
-		go t.handleConnection(conn, false)
+		go func() {
+			if _, err := t.handleConnection(conn, false); err != nil {
+				log.Printf("connection err: %s\n", err)
+			}
+		}()
 	}
 }
 
-func (t *TCPTransport) handleConnection(conn net.Conn, outbound bool) {
+func (t *TCPTransport) handleConnection(conn net.Conn, outbound bool) (Peer, error) {
 	var err error
-	defer func() {
-		log.Printf("dropping peer connection: %s\n", err)
-		err = conn.Close()
-		if err != nil {
-			log.Printf("error while closing peer connection %+v\n", err)
-		}
-	}()
 
 	peer := NewTCPPeer(conn, outbound)
 	if err = t.HandshakeFunc(peer); err != nil {
-		return
+		return nil, err
 	}
 
 	if t.OnPeer != nil {
 		if err = t.OnPeer(peer); err != nil {
-			return
+			log.Printf("error OnPeer %+v\n", err)
+			return nil, err
 		}
 	}
 
-	for {
-		rpc := RPC{From: conn.RemoteAddr().String()}
+	go func() {
+		// defer func() {
+		// 	log.Printf("dropping peer connection: %s\n", err)
+		// 	err = conn.Close()
+		// 	if err != nil {
+		// 		log.Printf("error while closing peer connection %+v\n", err)
+		// 	}
+		// }()
+		for {
+			rpc := RPC{From: conn.RemoteAddr().String()}
 
-		if err = t.Decoder.Decode(conn, &rpc); err != nil {
-			log.Printf("[%s] TCP error: %s\n", conn.LocalAddr(), err)
-			return
+			if err = t.Decoder.Decode(conn, &rpc); err != nil {
+				log.Printf("[%s] TCP error: %s\n", conn.LocalAddr(), err)
+				return
+			}
+
+			if rpc.Stream {
+				peer.wg.Add(1)
+				fmt.Printf("[%s] incoming stream [%s], waiting...\n", conn.LocalAddr(), conn.RemoteAddr())
+				peer.wg.Wait()
+				fmt.Printf("[%s] incoming stream [%s]closed\n", conn.LocalAddr(), conn.RemoteAddr())
+				continue
+			}
+
+			if rpc.Closed {
+				peer.closeChan <- struct{}{}
+				return
+			}
+
+			peer.rpcChan <- rpc
 		}
+	}()
 
-		if rpc.Stream {
-			peer.wg.Add(1)
-			fmt.Printf("[%s] incoming stream [%s], waiting...\n", conn.LocalAddr(), conn.RemoteAddr())
-			peer.wg.Wait()
-			fmt.Printf("[%s] incoming stream [%s]closed\n", conn.LocalAddr(), conn.RemoteAddr())
-			continue
-		}
-
-		t.rpcch <- rpc
-	}
+	return peer, nil
 }
