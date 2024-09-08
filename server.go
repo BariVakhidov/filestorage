@@ -167,7 +167,6 @@ func (s *FileServer) peerLoop(peer p2p.Peer) {
 				return
 			}
 		case <-peer.ClosePeer():
-			return
 		case <-s.quitch:
 			return
 		}
@@ -280,8 +279,6 @@ func (s *FileServer) handleMessageDeleteFile(msg MessageDeleteFile, from string)
 }
 
 func (s *FileServer) handleMessageStoreFile(msg MessageStoreFile, from string, peer p2p.Peer) error {
-	defer peer.CloseStream()
-
 	messageReady := &Message{
 		Payload: MessageInfo{
 			Key:    msg.Key,
@@ -291,6 +288,8 @@ func (s *FileServer) handleMessageStoreFile(msg MessageStoreFile, from string, p
 	if err := s.sendMessage(messageReady, peer); err != nil {
 		return err
 	}
+
+	defer peer.CloseStream()
 
 	n, err := s.store.WriteDecrypt(s.EncKey, msg.ID, msg.Key, io.LimitReader(peer, msg.Size))
 	if err != nil {

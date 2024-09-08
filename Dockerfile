@@ -23,6 +23,7 @@ FROM gcr.io/distroless/base-debian11 AS build-release-stage
 WORKDIR /
 
 COPY --from=build-stage /filestorage /filestorage
+COPY --from=build-stage /app/certs /certs
 EXPOSE 8080
 
 USER root:root
