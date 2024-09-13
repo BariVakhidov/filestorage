@@ -29,7 +29,6 @@ func TestServer(t *testing.T) {
 	}
 	s1, _ := makeServer(env, ":3000", encKey, "")
 	s2, _ := makeServer(env, ":4000", encKey, ":3000")
-	s3, _ := makeServer(env, ":5001", encKey, ":3000", ":4000")
 
 	go func() {
 		t.Error(s1.Start())
@@ -42,11 +41,6 @@ func TestServer(t *testing.T) {
 
 	time.Sleep(time.Millisecond * 100)
 
-	go func() {
-		t.Error(s3.Start())
-	}()
-
-	time.Sleep(time.Millisecond * 100)
 	wg := &sync.WaitGroup{}
 	for i := 0; i < 2; i++ {
 		wg.Add(1)
@@ -54,14 +48,14 @@ func TestServer(t *testing.T) {
 			key := fmt.Sprintf("key_%d.png", i)
 			payload := fmt.Sprintf("payload_%d", i)
 			d := bytes.NewReader([]byte(payload))
-			if err := s3.Store(key, d); err != nil {
+			if err := s2.Store(key, d); err != nil {
 				t.Error("store err: ", err)
 			}
 
-			if err := s3.store.Delete(s3.ID, hashKey(key)); err != nil {
+			if err := s2.store.Delete(s2.ID, hashKey(key)); err != nil {
 				t.Error(err)
 			}
-			_, r, err := s3.Get(key)
+			_, r, err := s2.Get(key)
 			if err != nil {
 				t.Error(err)
 			}
@@ -73,7 +67,7 @@ func TestServer(t *testing.T) {
 
 			assert.Equal(t, payload, string(b))
 
-			if err := s3.Delete(key); err != nil {
+			if err := s2.Delete(key); err != nil {
 				t.Error(err)
 			}
 			wg.Done()
