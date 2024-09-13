@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -85,6 +86,20 @@ func (s *Storage) Read(id, key string) (int64, io.Reader, error) {
 	return s.readStream(id, key)
 }
 
+func (s *Storage) ReadDecrypt(encKey []byte, id, key string) (int64, io.Reader, error) {
+	_, r, err := s.readStream(id, key)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	buf := new(bytes.Buffer)
+	n, err := copyDecrypt(encKey, r, buf)
+	if err != nil {
+		return 0, nil, err
+	}
+	return int64(n), buf, nil
+}
+
 func (s *Storage) Write(id, key string, r io.Reader) (int64, error) {
 	return s.writeStream(id, key, r)
 }
@@ -127,6 +142,17 @@ func (s *Storage) WriteDecrypt(encKey []byte, id, key string, r io.Reader) (int6
 	}
 
 	n, err := copyDecrypt(encKey, r, file)
+	return int64(n), err
+}
+
+func (s *Storage) WriteEncrypt(encKey []byte, id, key string, r io.Reader) (int64, error) {
+	file, err := s.openFileForWriting(id, key)
+
+	if err != nil {
+		return 0, err
+	}
+
+	n, err := copyEncrypt(encKey, r, file)
 	return int64(n), err
 }
 

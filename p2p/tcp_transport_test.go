@@ -13,7 +13,11 @@ func TestTCPTransport(t *testing.T) {
 		Decoder:       DefaultDecoder{},
 		HandshakeFunc: NOPHandshakeFunc,
 	}
-	tr := NewTCPTransport(tcpOpts)
+	tr, err := NewTCPTransport(tcpOpts)
+	//TODO: certs for testing
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	assert.Equal(t, listenAddr, tr.ListenAddr)
 

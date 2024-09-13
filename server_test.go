@@ -3,17 +3,33 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"log"
+	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestServer(t *testing.T) {
 	encKey, _ := newEncryptionKey()
+	env := os.Getenv("GO_ENV")
+	if env == "" {
+		env = envLocal
+	}
 
-	s1, _ := makeServer(":3000", encKey, "")
-	s2, _ := makeServer(":4000", encKey, ":3000")
-	s3, _ := makeServer(":5001", encKey, ":3000", ":4000")
+	if env != envProd {
+		err := godotenv.Load()
+		if err != nil {
+			log.Println("Error loading .env file")
+		}
+	}
+	s1, _ := makeServer(env, ":3000", encKey, "")
+	s2, _ := makeServer(env, ":4000", encKey, ":3000")
+	s3, _ := makeServer(env, ":5001", encKey, ":3000", ":4000")
 
 	go func() {
 		t.Error(s1.Start())
@@ -42,24 +58,24 @@ func TestServer(t *testing.T) {
 				t.Error("store err: ", err)
 			}
 
-			// if err := s3.store.Delete(s3.ID, hashKey(key)); err != nil {
-			// 	t.Error(err)
-			// }
-			// _, r, err := s3.Get(key)
-			// if err != nil {
-			// 	t.Error(err)
-			// }
+			if err := s3.store.Delete(s3.ID, hashKey(key)); err != nil {
+				t.Error(err)
+			}
+			_, r, err := s3.Get(key)
+			if err != nil {
+				t.Error(err)
+			}
 
-			// b, err := io.ReadAll(r)
-			// if err != nil {
-			// 	t.Error(err)
-			// }
+			b, err := io.ReadAll(r)
+			if err != nil {
+				t.Error(err)
+			}
 
-			// assert.Equal(t, payload, string(b))
+			assert.Equal(t, payload, string(b))
 
-			// if err := s3.Delete(key); err != nil {
-			// 	t.Error(err)
-			// }
+			if err := s3.Delete(key); err != nil {
+				t.Error(err)
+			}
 			wg.Done()
 		}()
 	}
