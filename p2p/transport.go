@@ -7,6 +7,10 @@ type Peer interface {
 	net.Conn
 	Send([]byte) error
 	CloseStream()
+	Consume() <-chan RPC
+	ClosePeer()
+	ConsumeClosePeer() <-chan struct{}
+	ConsumeStream() <-chan bool
 }
 
 // Transport is an interface that represent anything
@@ -14,8 +18,7 @@ type Peer interface {
 // This can be of the form (TCP, UDP, websockets ...)
 type Transport interface {
 	ListenAndAccept() error
-	Consume() <-chan RPC
 	Close() error
-	Dial(string) error
+	Dial(string) (Peer, error)
 	Addr() string
 }

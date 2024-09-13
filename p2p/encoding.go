@@ -24,10 +24,16 @@ func (dec DefaultDecoder) Decode(r io.Reader, rpc *RPC) error {
 		return err
 	}
 
+	switch peakBuf[0] {
 	//In case of a stream we are not decoding what is being sent over the network
-	stream := peakBuf[0] == IncomingStream
-	if stream {
-		rpc.Stream = true
+	case IncomingStream:
+		rpc.Action = STREAM_READY
+		return nil
+	case ClosePeer:
+		rpc.Action = CLOSE_PEER
+		return nil
+	case FileNotFound:
+		rpc.Action = FILE_NOT_FOUND
 		return nil
 	}
 

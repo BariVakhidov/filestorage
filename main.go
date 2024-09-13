@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 
@@ -15,15 +14,19 @@ const (
 	envProd  = "production"
 )
 
-func makeServer(listenAddr string, encKey []byte, nodes ...string) (*FileServer, error) {
+func makeServer(env string, listenAddr string, encKey []byte, nodes ...string) (*FileServer, error) {
+	logger := setupLogger(env)
+
 	tcpOpts := p2p.TCPTransportOptions{
 		ListenAddr:    listenAddr,
 		Decoder:       p2p.DefaultDecoder{},
 		HandshakeFunc: p2p.NOPHandshakeFunc,
+		Logger:        logger,
 	}
-	tcpTransport := p2p.NewTCPTransport(tcpOpts)
-	//TODO: env
-	logger := setupLogger(envLocal)
+	tcpTransport, err := p2p.NewTCPTransport(tcpOpts)
+	if err != nil {
+		return nil, err
+	}
 
 	serverOpts := FileServerOptions{
 		StorageRoot:       listenAddr + "_network",
@@ -40,6 +43,7 @@ func makeServer(listenAddr string, encKey []byte, nodes ...string) (*FileServer,
 	}
 
 	tcpTransport.OnPeer = server.OnPeer
+	tcpTransport.OnReconnect = server.OnReconnect
 
 	return server, nil
 }
@@ -47,7 +51,7 @@ func makeServer(listenAddr string, encKey []byte, nodes ...string) (*FileServer,
 func main() {
 	env := os.Getenv("GO_ENV")
 	if env == "" {
-		env = envDev
+		env = envLocal
 	}
 
 	if env != envProd {
@@ -57,23 +61,20 @@ func main() {
 		}
 	}
 
-	encKey, _ := newEncryptionKey()
-	//FIXME
-	fmt.Println(encKey)
+	//TODO: distribute key across nodes
+	encKey := make([]byte, 32)
+	for i := range encKey {
+		encKey[i] = byte(i)
+	}
+
 	portString := os.Getenv("PORT")
 
 	if portString == "" {
 		log.Fatal("No PORT provided")
 	}
-	server, err := makeServer(portString, encKey)
 
-	if err != nil {
-		log.Fatalln("Unable to start server: ", err)
+	server, _ := makeServer(env, portString, encKey)
+	if err := server.Start(); err != nil {
+		log.Fatalln(err)
 	}
-
-	go func() {
-		log.Fatalln(server.Start())
-	}()
-
-	select {}
 }
