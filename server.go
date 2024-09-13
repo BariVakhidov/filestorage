@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/BariVakhidov/filestorage/p2p"
+	"github.com/BariVakhidov/filestorage/safemap"
 )
 
 const (
@@ -68,11 +69,8 @@ type FileServer struct {
 	store  *Storage
 	quitch chan struct{}
 
-	peers     map[string]p2p.Peer
-	peersLock sync.RWMutex
-
-	activeNodes     map[string]struct{}
-	activeNodesLock sync.RWMutex
+	peers       *safemap.SafeMap[string, p2p.Peer]
+	activeNodes *safemap.SafeMap[string, struct{}]
 }
 
 func NewFileServer(opts FileServerOptions) (*FileServer, error) {
@@ -95,10 +93,8 @@ func NewFileServer(opts FileServerOptions) (*FileServer, error) {
 		FileServerOptions: opts,
 		store:             store,
 		quitch:            make(chan struct{}),
-		peers:             make(map[string]p2p.Peer),
-		peersLock:         sync.RWMutex{},
-		activeNodesLock:   sync.RWMutex{},
-		activeNodes:       make(map[string]struct{}),
+		peers:             safemap.New[string, p2p.Peer](),
+		activeNodes:       safemap.New[string, struct{}](),
 	}, nil
 }
 
@@ -111,9 +107,7 @@ func (s *FileServer) Stop() {
 func (s *FileServer) OnPeer(p p2p.Peer) error {
 	s.Logger.Info("connected peer", "RemoteAddr", p.RemoteAddr(), "Transport.Addr", s.Transport.Addr())
 
-	s.activeNodesLock.Lock()
-	s.activeNodes[p.RemoteAddr().String()] = struct{}{}
-	s.activeNodesLock.Unlock()
+	s.activeNodes.Set(p.RemoteAddr().String(), struct{}{})
 
 	go s.peerLoop(p)
 
@@ -227,6 +221,8 @@ func (s *FileServer) handleMessageGetFile(msg MessageGetFile, peer p2p.Peer) err
 }
 
 func (s *FileServer) handleMessagePing(msg MessagePing, peer p2p.Peer) error {
+	peerAddr := peer.RemoteAddr().String()
+
 	switch msg.PingAction {
 	case ACTION_PING:
 		msg := &Message{
@@ -234,22 +230,19 @@ func (s *FileServer) handleMessagePing(msg MessagePing, peer p2p.Peer) error {
 				PingAction: ACTION_PONG,
 			},
 		}
-		fmt.Printf("[%s] PING FROM [%s]\n", s.Transport.Addr(), peer.RemoteAddr().String())
+		fmt.Printf("[%s] PING FROM [%s]\n", s.Transport.Addr(), peerAddr)
 
 		//Update peers for pinging
-		s.peersLock.RLock()
-		_, ok := s.peers[peer.RemoteAddr().String()]
-		s.peersLock.RUnlock()
+		_, ok := s.peers.Get(peerAddr)
 		if !ok {
-			s.peersLock.Lock()
-			s.peers[peer.RemoteAddr().String()] = peer
-			s.peersLock.Unlock()
+			s.peers.Set(peerAddr, peer)
 		}
 
 		return s.sendMessage(msg, peer)
 	case ACTION_PONG:
-		fmt.Printf("[%s] PONG from [%s]\n", s.Transport.Addr(), peer.RemoteAddr().String())
+		fmt.Printf("[%s] PONG from [%s]\n", s.Transport.Addr(), peerAddr)
 	}
+
 	return nil
 }
 
@@ -277,19 +270,17 @@ func (s *FileServer) handleMessageStoreFile(msg MessageStoreFile, peer p2p.Peer)
 }
 
 func (s *FileServer) dialNodes() ([]p2p.Peer, error) {
-	s.activeNodesLock.RLock()
-	nodes := s.activeNodes
-	s.activeNodesLock.RUnlock()
+	activeNodes := s.getActiveNodes()
 
-	if len(nodes) == 0 {
+	if len(activeNodes) == 0 {
 		return nil, nil
 	}
 
-	peers := make([]p2p.Peer, 0, len(nodes))
+	peers := make([]p2p.Peer, 0, len(activeNodes))
 	mu := &sync.Mutex{}
 	wg := &sync.WaitGroup{}
 
-	for addr := range nodes {
+	for _, addr := range activeNodes {
 		if len(addr) == 0 {
 			continue
 		}
@@ -300,9 +291,7 @@ func (s *FileServer) dialNodes() ([]p2p.Peer, error) {
 			peer, err := s.Transport.Dial(addr)
 			if err != nil {
 				s.Logger.Error("dial", "err", err, "Transport.Addr", s.Transport.Addr())
-				s.activeNodesLock.Lock()
-				delete(s.activeNodes, addr)
-				s.activeNodesLock.Unlock()
+				s.activeNodes.Delete(addr)
 				return
 			}
 
@@ -337,9 +326,7 @@ func (s *FileServer) bootstrapNetwork() error {
 				return
 			}
 
-			s.peersLock.Lock()
-			s.peers[peer.RemoteAddr().String()] = peer
-			s.peersLock.Unlock()
+			s.peers.Set(peer.RemoteAddr().String(), peer)
 		}()
 	}
 
@@ -348,49 +335,42 @@ func (s *FileServer) bootstrapNetwork() error {
 }
 
 func (s *FileServer) OnReconnect(peer p2p.Peer) error {
-	remoteAddr := peer.RemoteAddr().String()
-
-	s.peersLock.Lock()
-	s.peers[remoteAddr] = peer
-	s.peersLock.Unlock()
-
+	s.peers.Set(peer.LocalAddr().String(), peer)
 	return nil
 }
 
 func (s *FileServer) pingPeers(msg *Message) {
-	s.peersLock.RLock()
-	defer s.peersLock.RUnlock()
+	peersLen := s.peers.Len()
 
-	if len(s.peers) == 0 {
+	if peersLen == 0 {
 		return
 	}
 
-	peersAddr := make([]string, 0, len(s.peers))
-	for addr := range s.peers {
-		peersAddr = append(peersAddr, addr)
-	}
-
-	fmt.Printf("[%s] PING %+v nodes\n", s.Transport.Addr(), peersAddr)
-
 	wg := &sync.WaitGroup{}
-	wg.Add(len(s.peers))
+	wg.Add(peersLen)
 
-	for addr, peer := range s.peers {
+	peersToRemove := make([]string, 0, peersLen)
+
+	s.peers.ForEach(func(addr string, peer p2p.Peer) {
 		go func() {
 			defer wg.Done()
 			if err := s.sendMessage(msg, peer); err != nil {
 				fmt.Printf("[%s] PING [%s] err %s\n", s.Transport.Addr(), addr, err)
-				s.peersLock.Lock()
-				delete(s.peers, addr)
-				s.peersLock.Unlock()
-				s.activeNodesLock.Lock()
-				delete(s.activeNodes, addr)
-				s.activeNodesLock.Unlock()
+				peersToRemove = append(peersToRemove, addr)
 			}
 		}()
-	}
+	})
 
 	wg.Wait()
+
+	if len(peersToRemove) == 0 {
+		return
+	}
+
+	for _, addr := range peersToRemove {
+		s.activeNodes.Delete(addr)
+		s.peers.Delete(addr)
+	}
 }
 
 func (s *FileServer) ping() error {
@@ -500,14 +480,8 @@ func (s *FileServer) storeToNetwork(peers []p2p.Peer, hashedKey string, size int
 }
 
 func (s *FileServer) getActiveNodes() []string {
-	s.activeNodesLock.RLock()
-	defer s.activeNodesLock.RUnlock()
-
-	activeNodes := make([]string, 0, len(s.activeNodes))
-	for node := range s.activeNodes {
-		activeNodes = append(activeNodes, node)
-	}
-
+	activeNodes := make([]string, 0, s.activeNodes.Len())
+	s.activeNodes.ForEach(func(node string, _ struct{}) { activeNodes = append(activeNodes, node) })
 	return activeNodes
 }
 

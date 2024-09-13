@@ -226,6 +226,7 @@ func (t *TCPTransport) acceptLoop() {
 
 		if err != nil {
 			t.Logger.Error("TCP accept", "err", err)
+			continue
 		}
 
 		peer := NewTCPPeer(conn, false)
