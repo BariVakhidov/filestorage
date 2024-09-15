@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/BariVakhidov/filestorage/p2p"
 	"github.com/joho/godotenv"
@@ -74,7 +76,19 @@ func main() {
 	}
 
 	server, _ := makeServer(env, portString, encKey)
-	if err := server.Start(); err != nil {
-		log.Fatalln(err)
-	}
+
+	go func() {
+		if err := server.Start(); err != nil {
+			log.Fatalln(err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+
+	sign := <-stop
+	log.Printf("Stopping server, signal %s\n", sign.String())
+	server.Stop()
+	log.Println("File server stopped")
 }
